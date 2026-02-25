@@ -1,0 +1,667 @@
+# jira-client
+
+A Python library for interacting with **Atlassian Jira Cloud** via the official REST API v3.
+Designed with SOLID principles, PEP 8 style, and clean separation of concerns, it is intended to be embedded in LLM pipelines (e.g. an MCP server driven by Claude) that programmatically create and manage Jira issues.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Authentication: Token Types and Scopes](#authentication-token-types-and-scopes)
+- [Configuration](#configuration)
+- [Quick Start](#quick-start)
+- [API Reference](#api-reference)
+  - [JiraClient](#jiraclient)
+  - [Projects API](#projects-api)
+  - [Issues API](#issues-api)
+  - [Comments API](#comments-api)
+- [Models](#models)
+- [Error Handling](#error-handling)
+- [Running the Examples](#running-the-examples)
+- [Project Structure](#project-structure)
+- [Suggested Additional Operations](#suggested-additional-operations)
+
+---
+
+## Features
+
+| Category | Operations |
+|---|---|
+| **Projects** | List all projects, get a single project, list issue types, components, versions |
+| **Issues** | Create, read, update, delete, bulk create, search via JQL |
+| **Issues – Filters** | Get open issues, get closed issues with optional date range |
+| **Issues – Workflow** | List available transitions, apply a transition (status change) |
+| **Issues – Relations** | Assign, link issues (Blocks / Duplicate / …), watchers |
+| **Comments** | List, get, add, update, delete |
+
+---
+
+## Requirements
+
+- Python **3.10** or newer
+- A **Jira Cloud** instance (this library targets the REST API v3 hosted at `*.atlassian.net`)
+- A Jira **API token** — generate one at <https://id.atlassian.com/manage-profile/security/api-tokens>
+
+---
+
+## Installation
+
+Clone the repository and install the package in editable mode so that any local changes are immediately reflected without reinstalling:
+
+```bash
+git clone https://github.com/your-org/jira-client.git
+cd jira-client
+pip install -e .
+```
+
+To also install development tools (linter, test runner):
+
+```bash
+pip install -e ".[dev]"
+```
+
+---
+
+## Authentication: Token Types and Scopes
+
+Atlassian Jira Cloud supports three different types of credentials. Choosing the wrong one is the most common cause of 401/403 errors.
+
+---
+
+### Type 1 — Classic API Token ✅ Recommended for scripts and LLM pipelines
+
+A classic API token is the simplest option. It inherits **all the permissions of the user who created it** and requires no scope configuration.
+
+**How to generate:**
+1. Go to <https://id.atlassian.com/manage-profile/security/api-tokens>
+2. Click **Create API token** → choose **Classic API token**
+3. Copy the token immediately (it is shown only once)
+
+**How it authenticates:** HTTP Basic Auth — the token is used as the password alongside your email.
+
+```dotenv
+JIRA_AUTH_TYPE=basic
+JIRA_EMAIL=you@example.com
+JIRA_API_TOKEN=ATATxxxxxxxxxxxxxxxx
+```
+
+> **Important:** the email must be the one associated with your Atlassian account, not necessarily your login email for other services. Verify it at <https://id.atlassian.com/manage-profile>.
+
+---
+
+### Type 2 — Scoped API Token (fine-grained, newer feature)
+
+Scoped API tokens are similar to classic tokens but have **explicit permission scopes** that restrict what the token can do. They are still authenticated via **HTTP Basic Auth** (not Bearer), so `JIRA_AUTH_TYPE=basic` is correct for these too.
+
+**How to generate:**
+1. Go to <https://id.atlassian.com/manage-profile/security/api-tokens>
+2. Click **Create API token** → choose **API token with scopes**
+3. Select the required scopes (see table below)
+
+**Required scopes for this library:**
+
+| Scope | Operations covered |
+|---|---|
+| `read:jira-work` | List projects, get issues, search (JQL), read comments, list transitions, read watchers |
+| `write:jira-work` | Create/update/delete issues, add/update/delete comments, apply transitions, assign, link issues, add watchers, bulk create |
+| `read:jira-user` | `/myself` endpoint (used by `check_auth.py`), reporter/assignee display names |
+
+> Tip: select all three scopes when creating a scoped token for use with this library.
+
+**`.env` configuration** (same as classic — Basic Auth):
+
+```dotenv
+JIRA_AUTH_TYPE=basic
+JIRA_EMAIL=you@example.com
+JIRA_API_TOKEN=<your-scoped-token>
+```
+
+---
+
+### Type 3 — OAuth 2.0 Bearer Token (three-legged OAuth / app tokens)
+
+OAuth 2.0 tokens are issued by an **Atlassian OAuth 2.0 app** registered in the Atlassian Developer Console. They are intended for multi-user SaaS products and require an authorization code flow. They authenticate via an `Authorization: Bearer <token>` header.
+
+This type is the most complex to set up and is **not recommended** for single-user scripts or LLM pipelines. Use it only if your organisation mandates OAuth 2.0 app-based access.
+
+**Required OAuth 2.0 scopes for this library:**
+
+| Scope | Operations covered |
+|---|---|
+| `read:jira-work` | Read projects, issues, comments, transitions |
+| `write:jira-work` | Create/update/delete issues and comments, transitions, assign, link |
+| `read:jira-user` | Read user profile (`/myself`) |
+| `offline_access` | Obtain a refresh token for long-lived access |
+
+**`.env` configuration:**
+
+```dotenv
+JIRA_AUTH_TYPE=bearer
+JIRA_API_TOKEN=<oauth2-access-token>
+# JIRA_EMAIL is not required for Bearer auth
+```
+
+---
+
+### Quick comparison
+
+| | Classic API token | Scoped API token | OAuth 2.0 token |
+|---|---|---|---|
+| `JIRA_AUTH_TYPE` | `basic` | `basic` | `bearer` |
+| `JIRA_EMAIL` required | ✅ | ✅ | ❌ |
+| Permissions | All user permissions | Explicit scopes only | Explicit scopes only |
+| Scope configuration | None needed | Required at creation | Required in app |
+| Best for | Scripts, LLM pipelines | Restricted automation | Multi-user SaaS apps |
+| Where to create | [id.atlassian.com/…/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens) | Same page | [developer.atlassian.com](https://developer.atlassian.com) |
+
+---
+
+### Troubleshooting authentication errors
+
+| Error | Likely cause | Fix |
+|---|---|---|
+| 401 "Client must be authenticated" | Wrong email or token | Verify email at id.atlassian.com; regenerate a classic token |
+| 401 with `JIRA_AUTH_TYPE=basic` + scoped token | Scoped token missing required scopes | Re-create the token and add `read:jira-work` + `write:jira-work` + `read:jira-user` |
+| 403 "Failed to parse Connect Session Auth Token" | Bearer auth used with a non-OAuth token | Switch to `JIRA_AUTH_TYPE=basic`; Bearer only works with OAuth 2.0 app tokens |
+| 403 "No Browse Projects permission" | Token is valid but user has no project access | Ask your Jira admin to grant Browse Projects permission |
+
+---
+
+## Configuration
+
+The library reads credentials from environment variables. The easiest way to provide them is via a `.env` file placed in the working directory from which you run your script.
+
+### 1. Create the `.env` file
+
+Copy the provided template and fill in your details:
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and set the four variables:
+
+```dotenv
+# The subdomain of your Atlassian instance (without "https://")
+JIRA_DOMAIN=your-org.atlassian.net
+
+# The email address associated with your Atlassian account
+JIRA_EMAIL=you@example.com
+
+# The API token generated at https://id.atlassian.com/manage-profile/security/api-tokens
+JIRA_API_TOKEN=ATATxxxxxxxxxxxxxxxx
+
+# (Optional) Default project key used when no project is specified in API calls
+JIRA_PROJECT=MYPROJ
+```
+
+> **Security note:** Never commit your `.env` file to version control.
+> Add it to `.gitignore` immediately: `echo ".env" >> .gitignore`.
+
+### 2. Load configuration programmatically
+
+```python
+from jira_client import JiraClient, JiraConfig
+
+# Option A – load from .env automatically (recommended)
+client = JiraClient.from_env()
+
+# Option B – load from a custom path
+client = JiraClient.from_env(env_file="/path/to/my.env")
+
+# Option C – build config manually (useful for tests or injected secrets)
+config = JiraConfig(
+    domain="your-org.atlassian.net",
+    email="you@example.com",
+    api_token="ATATxxxxxxxx",
+    default_project="MYPROJ",
+)
+client = JiraClient(config)
+```
+
+---
+
+## Quick Start
+
+```python
+from jira_client import JiraClient
+from jira_client.models import IssueCreate
+
+# Connect
+client = JiraClient.from_env()
+
+# List all projects
+for project in client.projects.get_all():
+    print(f"[{project.key}] {project.name}")
+
+# Create an issue
+issue = client.issues.create(
+    IssueCreate(
+        project_key="MYPROJ",
+        summary="Homepage is slow to load",
+        issue_type="Bug",
+        priority="High",
+        description="P95 response time exceeds 3 s on the production homepage.",
+        labels=["performance", "frontend"],
+    )
+)
+print(f"Created: {issue.key}")
+
+# Read it back
+issue = client.issues.get(issue.key)
+print(issue.status.name)  # e.g. "To Do"
+
+# Add a comment
+from jira_client.models import CommentCreate
+client.comments.add(issue.key, CommentCreate("Assigned to the perf team."))
+```
+
+---
+
+## API Reference
+
+### JiraClient
+
+The top-level client. All API groups are available as attributes.
+
+```python
+client = JiraClient.from_env()
+
+client.projects   # ProjectsAPI
+client.issues     # IssuesAPI
+client.comments   # CommentsAPI
+```
+
+---
+
+### Projects API
+
+#### `get_all() -> list[Project]`
+
+Return every Jira project the authenticated user can see.
+
+```python
+projects = client.projects.get_all()
+```
+
+#### `get(project_key: str) -> Project`
+
+Return a single project by its key.
+
+```python
+project = client.projects.get("MYPROJ")
+print(project.name, project.lead)
+```
+
+#### `get_issue_types(project_key: str) -> list[dict]`
+
+Return the issue types configured for a project (Bug, Story, Task, Epic, …).
+
+```python
+types = client.projects.get_issue_types("MYPROJ")
+for t in types:
+    print(t["name"])
+```
+
+#### `get_components(project_key: str) -> list[dict]`
+
+Return all components defined in a project.
+
+#### `get_versions(project_key: str) -> list[dict]`
+
+Return all versions (fix versions / releases) defined in a project.
+
+---
+
+### Issues API
+
+#### `create(issue: IssueCreate) -> Issue`
+
+Create a new issue. Returns the fully populated `Issue` object.
+
+```python
+from jira_client.models import IssueCreate
+
+issue = client.issues.create(
+    IssueCreate(
+        project_key="MYPROJ",
+        summary="Add dark mode support",
+        issue_type="Story",
+        description="Users should be able to toggle between light and dark themes.",
+        priority="Medium",
+        labels=["ux", "frontend"],
+        components=["UI"],
+        due_date="2025-06-30",
+    )
+)
+```
+
+**`IssueCreate` fields:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `project_key` | `str` | ✅ | Target project key |
+| `summary` | `str` | ✅ | Short title of the issue |
+| `issue_type` | `str` | — | Default: `"Task"` |
+| `description` | `str \| None` | — | Plain text; converted to ADF automatically |
+| `priority` | `str \| None` | — | `"Highest"`, `"High"`, `"Medium"`, `"Low"`, `"Lowest"` |
+| `assignee_account_id` | `str \| None` | — | Atlassian account ID of the assignee |
+| `labels` | `list[str]` | — | List of label strings |
+| `components` | `list[str]` | — | List of component names |
+| `due_date` | `str \| None` | — | ISO date `"YYYY-MM-DD"` |
+
+#### `get(issue_key: str) -> Issue`
+
+Fetch a single issue by its key.
+
+```python
+issue = client.issues.get("MYPROJ-42")
+```
+
+#### `update(issue_key: str, update: IssueUpdate) -> None`
+
+Update one or more fields. Only fields that are not `None` are sent to the API.
+
+```python
+from jira_client.models import IssueUpdate
+
+client.issues.update(
+    "MYPROJ-42",
+    IssueUpdate(priority="Highest", labels=["mobile", "urgent"]),
+)
+```
+
+#### `delete(issue_key: str, delete_subtasks: bool = False) -> None`
+
+Permanently delete an issue. Pass `delete_subtasks=True` to also remove child issues.
+
+#### `search(jql: str, max_results: int = 50, start_at: int = 0) -> IssueSearchResult`
+
+Execute an arbitrary JQL query and return a paginated result.
+
+```python
+result = client.issues.search(
+    'project = MYPROJ AND issuetype = Bug AND priority = High ORDER BY created DESC',
+    max_results=20,
+)
+print(f"{result.total} total, showing {len(result.issues)}")
+```
+
+#### `get_open(project_key=None, max_results=50, start_at=0) -> IssueSearchResult`
+
+Return all issues whose status category is **not Done**. Uses `JIRA_PROJECT` from `.env` when `project_key` is omitted.
+
+#### `get_closed(project_key=None, date_from=None, date_to=None, max_results=50, start_at=0) -> IssueSearchResult`
+
+Return resolved issues, with optional date range filtering on `resolutiondate`.
+
+```python
+from datetime import date
+
+result = client.issues.get_closed(
+    project_key="MYPROJ",
+    date_from=date(2024, 1, 1),
+    date_to=date(2024, 12, 31),
+)
+```
+
+#### `get_transitions(issue_key: str) -> list[dict]`
+
+Return all workflow transitions available for an issue given its current status.
+
+#### `transition(issue_key: str, transition_id: str) -> None`
+
+Apply a workflow transition to move the issue to a new status.
+
+```python
+transitions = client.issues.get_transitions("MYPROJ-42")
+done_id = next(t["id"] for t in transitions if t["name"] == "Done")
+client.issues.transition("MYPROJ-42", done_id)
+```
+
+#### `assign(issue_key: str, account_id: str | None) -> None`
+
+Assign an issue to a user by Atlassian account ID, or unassign by passing `None`.
+
+#### `bulk_create(issues: list[IssueCreate]) -> list[Issue]`
+
+Create several issues in a single API round-trip. Particularly useful when an LLM generates a batch of issues that must all be submitted at once.
+
+```python
+created = client.issues.bulk_create([issue_a, issue_b, issue_c])
+```
+
+#### `link(link_type, inward_issue_key, outward_issue_key, comment=None) -> None`
+
+Create a directed link between two issues.
+
+```python
+client.issues.link("Blocks", "MYPROJ-10", "MYPROJ-11")
+```
+
+Common `link_type` values: `"Blocks"`, `"Cloners"`, `"Duplicate"`, `"Relates"`.
+
+#### `get_watchers(issue_key) -> list[dict]` / `add_watcher(issue_key, account_id) -> None`
+
+Manage the watcher list for an issue.
+
+---
+
+### Comments API
+
+#### `get_all(issue_key: str) -> list[Comment]`
+
+Return all comments on an issue, oldest first.
+
+#### `get(issue_key: str, comment_id: str) -> Comment`
+
+Return a single comment by ID.
+
+#### `add(issue_key: str, comment: CommentCreate) -> Comment`
+
+Add a new comment. The body is plain text and is automatically converted to ADF.
+
+```python
+from jira_client.models import CommentCreate
+client.comments.add("MYPROJ-42", CommentCreate("Verified on staging. Ready for release."))
+```
+
+#### `update(issue_key, comment_id, update: CommentUpdate) -> Comment`
+
+Replace the body of an existing comment.
+
+#### `delete(issue_key, comment_id) -> None`
+
+Permanently delete a comment.
+
+---
+
+## Models
+
+All models are standard Python **dataclasses** — no external validation library required.
+
+| Model | Description |
+|---|---|
+| `JiraConfig` | Connection credentials and default project |
+| `Project` | Jira project (id, key, name, type, lead, category) |
+| `ProjectCategory` | Project category grouping |
+| `Issue` | Full issue representation |
+| `IssueCreate` | DTO for creating an issue (serialises to API payload) |
+| `IssueUpdate` | DTO for updating an issue (only non-None fields are sent) |
+| `IssueType` | Issue type metadata (Bug, Story, Task, …) |
+| `Priority` | Priority metadata |
+| `Status` | Workflow status with category (new / indeterminate / done) |
+| `IssueSearchResult` | Paginated search result wrapping a `list[Issue]` |
+| `Comment` | A single issue comment |
+| `CommentCreate` | DTO for adding a comment |
+| `CommentUpdate` | DTO for editing a comment body |
+
+### Atlassian Document Format (ADF)
+
+Jira Cloud requires rich-text fields (description, comment body) to be submitted as **ADF JSON** rather than plain text. The library handles this transparently:
+
+- When **writing** a description or comment, pass a plain `str` — it is converted to ADF automatically.
+- When **reading**, ADF is converted back to a plain `str` before being stored in the model.
+
+If you need direct access to the conversion utilities:
+
+```python
+from jira_client.utils import text_to_adf, adf_to_text
+
+adf_doc = text_to_adf("First paragraph.\n\nSecond paragraph.")
+plain   = adf_to_text(adf_doc)
+```
+
+---
+
+## Error Handling
+
+All exceptions inherit from `JiraClientError` so you can catch them at any granularity.
+
+```python
+from jira_client.exceptions import (
+    JiraClientError,
+    JiraAuthError,       # 401 / 403
+    JiraNotFoundError,   # 404
+    JiraValidationError, # 400 (bad payload)
+    JiraRateLimitError,  # 429 (too many requests)
+)
+
+try:
+    issue = client.issues.get("MYPROJ-9999")
+except JiraNotFoundError as exc:
+    print(f"Issue not found: {exc}")
+except JiraAuthError as exc:
+    print(f"Check your API token: {exc}")
+except JiraRateLimitError:
+    print("Slow down — rate limit hit.")
+except JiraClientError as exc:
+    print(f"Unexpected Jira error ({exc.status_code}): {exc}")
+```
+
+---
+
+## Running the Examples
+
+All example scripts live in the `examples/` folder. Each script is self-contained and calls `JiraClient.from_env()`, so the only prerequisite is a valid `.env` file in the directory from which you run the script.
+
+### Prerequisites
+
+1. Install the library (see [Installation](#installation)).
+2. Create and populate your `.env` file (see [Configuration](#configuration)).
+3. Make sure the project key referenced in each example (`MYPROJ`) matches an actual project in your Jira instance, or edit the script accordingly.
+
+### Running a script
+
+Open a terminal in the repository root and run any example with Python:
+
+```bash
+# List all projects
+python examples/get_projects.py
+
+# Fetch a specific issue (edit the key inside the file first)
+python examples/get_issue.py
+
+# Retrieve open issues
+python examples/get_open_issues.py
+
+# Retrieve closed issues for a date range
+python examples/get_closed_issues.py
+
+# Create a new issue
+python examples/create_issue.py
+
+# Update an existing issue
+python examples/update_issue.py
+
+# Add, list, update and delete comments
+python examples/add_comment.py
+
+# List workflow transitions and move an issue to "In Progress"
+python examples/transition_issue.py
+
+# Run a custom JQL search
+python examples/search_jql.py
+
+# Bulk-create multiple issues in one API call
+python examples/bulk_create_issues.py
+```
+
+### Customising the examples
+
+Each example hard-codes a project key (`"MYPROJ"`) and/or an issue key (`"MYPROJ-42"`). Before running, open the file and replace these values with real keys from your Jira instance.
+
+For example, to run `get_open_issues.py` against your project `"ACME"`:
+
+```python
+# examples/get_open_issues.py  — change this line:
+result = client.issues.get_open(project_key="ACME", max_results=25)
+```
+
+---
+
+## Project Structure
+
+```
+jira-client/
+├── pyproject.toml              # Package metadata and dependencies
+├── .env.example                # Template for environment variables
+├── README.md
+├── src/
+│   └── jira_client/
+│       ├── __init__.py         # Public API exports
+│       ├── client.py           # JiraClient — main entry point
+│       ├── config.py           # JiraConfig dataclass + from_env()
+│       ├── exceptions.py       # Custom exception hierarchy
+│       ├── utils.py            # ADF ↔ plain-text conversion helpers
+│       ├── models/
+│       │   ├── __init__.py
+│       │   ├── project.py      # Project, ProjectCategory
+│       │   ├── issue.py        # Issue, IssueCreate, IssueUpdate, …
+│       │   └── comment.py      # Comment, CommentCreate, CommentUpdate
+│       └── api/
+│           ├── __init__.py
+│           ├── base.py         # BaseAPI — shared HTTP helpers & error mapping
+│           ├── projects.py     # ProjectsAPI
+│           ├── issues.py       # IssuesAPI
+│           └── comments.py     # CommentsAPI
+└── examples/
+    ├── get_projects.py
+    ├── create_issue.py
+    ├── get_open_issues.py
+    ├── get_closed_issues.py
+    ├── get_issue.py
+    ├── update_issue.py
+    ├── add_comment.py
+    ├── transition_issue.py
+    ├── search_jql.py
+    └── bulk_create_issues.py
+```
+
+---
+
+## Suggested Additional Operations
+
+The following operations are already implemented in the library and can be useful when building an LLM-driven pipeline:
+
+| Operation | Method | Notes |
+|---|---|---|
+| Custom JQL search | `issues.search(jql)` | Full JQL expression support |
+| Bulk issue creation | `issues.bulk_create(list)` | Single API call for multiple issues |
+| Workflow transition | `issues.transition(key, id)` | Move issues through status columns |
+| Issue linking | `issues.link(type, a, b)` | Express dependencies between issues |
+| Watcher management | `issues.add_watcher()` | Subscribe users to notifications |
+| Project components | `projects.get_components()` | Required when populating component fields |
+| Project versions | `projects.get_versions()` | Required for fix-version fields |
+| Comment lifecycle | `comments.add/update/delete` | Full CRUD on comments |
+
+Future extensions worth considering:
+
+- **Attachment upload** — POST multipart/form-data to `/issue/{key}/attachments`
+- **Worklog** — log time spent on an issue
+- **Sprint management** — requires the Agile API (`/rest/agile/1.0/`)
+- **User search** — find account IDs by display name or email for the `assignee` field
+- **Field metadata** — call `/issue/createmeta` to dynamically discover required fields per project/issue-type pair (very useful for LLM prompts)
