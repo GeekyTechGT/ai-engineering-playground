@@ -1,20 +1,28 @@
-import os
 from pathlib import Path
 
 from sharepoint_ms import SharePointClient, SharePointConfig
+from _env import load_local_env, require_env
 
+load_local_env()
+env = require_env(
+    "TENANT_ID",
+    "CLIENT_ID",
+    "CLIENT_SECRET",
+    "SHAREPOINT_HOSTNAME",
+    "SHAREPOINT_SITE_PATH",
+)
 
 config = SharePointConfig(
-    tenant_id=os.environ["TENANT_ID"],
-    client_id=os.environ["CLIENT_ID"],
-    client_secret=os.environ["CLIENT_SECRET"],
+    tenant_id=env["TENANT_ID"],
+    client_id=env["CLIENT_ID"],
+    client_secret=env["CLIENT_SECRET"],
 )
 
 client = SharePointClient(config)
 
 site = client.get_site(
-    hostname=os.environ["SHAREPOINT_HOSTNAME"],
-    site_path=os.environ["SHAREPOINT_SITE_PATH"],
+    hostname=env["SHAREPOINT_HOSTNAME"],
+    site_path=env["SHAREPOINT_SITE_PATH"],
 )
 site_id = site["id"]
 

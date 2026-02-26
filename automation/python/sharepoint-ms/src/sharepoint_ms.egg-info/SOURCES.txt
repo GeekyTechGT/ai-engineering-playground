@@ -1,0 +1,10 @@
+LICENSE
+README.md
+pyproject.toml
+src/sharepoint_ms/__init__.py
+src/sharepoint_ms/client.py
+src/sharepoint_ms.egg-info/PKG-INFO
+src/sharepoint_ms.egg-info/SOURCES.txt
+src/sharepoint_ms.egg-info/dependency_links.txt
+src/sharepoint_ms.egg-info/requires.txt
+src/sharepoint_ms.egg-info/top_level.txt
