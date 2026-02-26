@@ -110,15 +110,26 @@ Puoi usare il file `.env.example` come base.
 Dalla root repository:
 
 ```bash
-pip install -e automation/sharepoint-ms
+pip install -e automation/python/sharepoint-ms
 ```
 
 Oppure build wheel:
 
 ```bash
-cd automation/sharepoint-ms
+cd automation/python/sharepoint-ms
 python -m build
 pip install dist/sharepoint_ms-0.1.0-py3-none-any.whl
+```
+
+## Esecuzione esempi
+
+Gli script in `examples/` caricano automaticamente il file `.env` nella root del progetto (`automation/python/sharepoint-ms/.env`), quindi non serve fare `source .env`.
+
+Esegui da root repository:
+
+```bash
+python automation/python/sharepoint-ms/examples/basic_usage.py
+python automation/python/sharepoint-ms/examples/check_user_permissions.py
 ```
 
 ## Utilizzo rapido

@@ -1,271 +1,337 @@
 # sharepoint-ms
 
-Libreria Python installabile per interagire con **Microsoft SharePoint Online** tramite **Microsoft Graph API**.
+A Python library for automating **Microsoft SharePoint Online** via the
+**Microsoft Graph API** (app-only authentication).
 
-Questa libreria è pensata per automation/script backend (CI/CD, job pianificati, integrazioni interne) con autenticazione **app-only** (`client_credentials`).
+Designed for backend automation scenarios: CI/CD pipelines, scheduled jobs,
+ETL processes, and system integrations.
 
-## Cosa fa
+---
 
-- Autenticazione OAuth2 verso Microsoft Entra ID (ex Azure AD)
-- Risoluzione sito SharePoint (`hostname + site_path -> site_id`)
-- Lista contenuti della root documentale
-- Upload file in document library
-- Download file da SharePoint
-- Verifica permessi di una persona su un sito SharePoint (assegnazioni dirette e via gruppo)
+## Features
 
-## Prerequisiti
+| Capability | Description |
+|---|---|
+| App-only auth | OAuth2 `client_credentials` flow – no user login required |
+| Site resolution | Resolve any SharePoint site by hostname + server-relative path |
+| Document libraries | List, discover, and navigate document libraries (drives) |
+| Folder browsing | List root items or navigate sub-folders by path or ID |
+| File upload | Upload local files to any folder in any library |
+| File download | Download files by item ID to a local path |
+| Permission inspection | Check a user's effective SharePoint roles (direct, SP groups, AAD groups) |
 
-Serve avere:
+---
 
-- Python `>= 3.10`
-- Tenant Microsoft 365 / Microsoft Entra ID
-- Un sito SharePoint Online attivo (es. `https://contoso.sharepoint.com/sites/TeamSite`)
-- Permessi per creare/gestire una **App Registration** in Entra ID
-- Admin consent per i permessi API (se richiesto dalla policy aziendale)
+## Prerequisites
 
-## Setup Microsoft (obbligatorio)
+### 1. Azure App Registration
 
-### 1) Crea App Registration
+You need an **App Registration** in **Microsoft Entra ID** (formerly Azure AD)
+with the *client credentials* flow enabled.
 
-Nel portale Azure:
+1. Go to [portal.azure.com](https://portal.azure.com) → **Microsoft Entra ID** → **App registrations** → **New registration**.
+2. Give it a name (e.g. `sharepoint-automation`), leave redirect URI blank.
+3. After creation, note the **Application (client) ID** and **Directory (tenant) ID**.
+4. Go to **Certificates & secrets** → **New client secret** → note the generated secret value.
 
-1. Vai su **Microsoft Entra ID** -> **App registrations** -> **New registration**
-2. Dai un nome (es. `sharepoint-automation-client`)
-3. `Supported account types`: normalmente *Single tenant*
-4. Crea l'app
+### 2. API Permissions
 
-Prendi nota di:
+Go to **API permissions** → **Add a permission** → **Microsoft Graph** → **Application permissions**.
 
-- `Application (client) ID`
-- `Directory (tenant) ID`
+Add and **grant admin consent** for:
 
-### 2) Crea client secret
+| Permission | Scope | Why needed |
+|---|---|---|
+| `Sites.Read.All` | Graph | Read site metadata and drives |
+| `Files.ReadWrite.All` | Graph | Upload and download files |
+| `User.Read.All` | Graph | Look up users by email |
+| `GroupMember.Read.All` | Graph | Resolve AAD group memberships |
 
-1. Dentro l'app -> **Certificates & secrets**
-2. **New client secret**
-3. Copia il valore (non solo l'ID)
+For the **permission-check example** only, also add:
 
-Ti servirà come `CLIENT_SECRET`.
+| Permission | Scope | Why needed |
+|---|---|---|
+| `Sites.FullControl.All` | SharePoint | Read SharePoint role assignments via REST API |
 
-### 3) Assegna permessi Graph API
+> **Note:** `Sites.FullControl.All` is a SharePoint-scoped permission found under
+> **SharePoint** (not Microsoft Graph) in the permission picker.
 
-Vai in **API permissions** -> **Add a permission** -> **Microsoft Graph** -> **Application permissions**.
+---
 
-Permessi minimi consigliati (dipende dall'uso):
+## Installation
 
-- `Sites.Read.All` per sola lettura
-- `Sites.ReadWrite.All` per upload/modifica
-- `Files.Read.All` / `Files.ReadWrite.All` (opzionali, in base alle policy)
-- `User.Read.All` per risolvere la mail utente in object id
-- `Directory.Read.All` per valutare membership transitive nei gruppi AAD
-
-### 4) Assegna permessi SharePoint API (necessari per controllo ACL sito)
-
-Per leggere i role assignments reali del sito, aggiungi anche i permessi applicativi sulla risorsa SharePoint:
-
-1. **API permissions** -> **Add a permission**
-2. **SharePoint**
-3. **Application permissions**
-4. Aggiungi almeno `Sites.Read.All` (oppure `Sites.FullControl.All` se la tua policy richiede scope più ampio)
-
-Dopo aver aggiunto i permessi:
-
-1. Premi **Grant admin consent**
-2. Verifica che risulti `Granted for <Tenant>`
-
-Senza admin consent, nella maggior parte degli ambienti enterprise riceverai `403 Forbidden`.
-
-## Variabili ambiente richieste
-
-Puoi usare il file `.env.example` come base.
-
-- `TENANT_ID`: Directory (tenant) ID
-- `CLIENT_ID`: Application (client) ID
-- `CLIENT_SECRET`: client secret value
-- `SHAREPOINT_HOSTNAME`: es. `contoso.sharepoint.com`
-- `SHAREPOINT_SITE_PATH`: es. `/sites/TeamSite`
-- `TARGET_USER_EMAIL`: utente da verificare (es. `name.surname@contoso.com`)
-
-## Installazione
-
-Dalla root repository:
+### Option A – Editable install (recommended for development)
 
 ```bash
+# From the project root
 pip install -e automation/python/sharepoint-ms
 ```
 
-Oppure build wheel:
+### Option B – Install from source wheel
 
 ```bash
 cd automation/python/sharepoint-ms
+pip install build
 python -m build
-pip install dist/sharepoint_ms-0.1.0-py3-none-any.whl
+pip install dist/sharepoint_ms-*.whl
 ```
 
-## Esecuzione esempi
+### Dependencies
 
-Gli script in `examples/` caricano automaticamente il file `.env` nella root del progetto (`automation/python/sharepoint-ms/.env`), quindi non serve fare `source .env`.
+The library only requires `requests >= 2.31.0` (no other dependencies).
 
-Esegui da root repository:
+---
 
-```bash
-python automation/python/sharepoint-ms/examples/basic_usage.py
-python automation/python/sharepoint-ms/examples/check_user_permissions.py
+## Configuration
+
+Copy `.env.example` to `.env` and fill in your values:
+
+```dotenv
+# Azure AD credentials
+TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+CLIENT_SECRET=your-client-secret-here
+
+# SharePoint target site
+SHAREPOINT_HOSTNAME=contoso.sharepoint.com
+SHAREPOINT_SITE_PATH=/sites/MySite
+
+# Document library name (usually "Documents")
+DRIVE_NAME=Documents
+
+# Subfolder path (used by examples 05 and 06)
+SUBFOLDER_PATH=Reports/2024
+
+# Item ID for download example (copy from example 04 / 05 output)
+ITEM_ID=01XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+# User email for permission-check example
+TARGET_USER_EMAIL=alice@contoso.com
 ```
 
-## Utilizzo rapido
+> The `.env` file is loaded automatically by all example scripts.
+> Never commit it to source control – it is already in `.gitignore`.
+
+---
+
+## Quick Start
 
 ```python
-import os
 from sharepoint_ms import SharePointClient, SharePointConfig
 
 config = SharePointConfig(
-    tenant_id=os.environ["TENANT_ID"],
-    client_id=os.environ["CLIENT_ID"],
-    client_secret=os.environ["CLIENT_SECRET"],
+    tenant_id="your-tenant-id",
+    client_id="your-client-id",
+    client_secret="your-client-secret",
 )
-
 client = SharePointClient(config)
-site = client.get_site(
-    hostname=os.environ["SHAREPOINT_HOSTNAME"],
-    site_path=os.environ["SHAREPOINT_SITE_PATH"],
-)
+
+# 1. Resolve the site
+site = client.get_site("contoso.sharepoint.com", "/sites/TeamSite")
 site_id = site["id"]
 
-# Lista file/cartelle in root
-items = client.list_drive_root_items(site_id)
+# 2. Find the "Documents" library
+drive = client.get_drive_by_name(site_id, "Documents")
+drive_id = drive["id"]
+
+# 3. List files and folders at the library root
+items = client.list_root_items(site_id, drive_id)
 for item in items:
-    print(item["name"])
+    kind = "folder" if "folder" in item else "file"
+    print(f"{kind:6}  {item['name']}")
 
-# Upload file in "Shared Documents"
-client.upload_file(site_id, "Shared Documents", "./report.csv")
+# 4. List a subfolder
+sub_items = client.list_folder_items(site_id, drive_id, "Reports/2024")
+
+# 5. Upload a file
+uploaded = client.upload_file(site_id, drive_id, "Uploads", "/tmp/report.pdf")
+print(f"Uploaded: {uploaded['webUrl']}")
+
+# 6. Download a file (use the item ID from a listing)
+client.download_file(site_id, drive_id, uploaded["id"], "/tmp/downloaded.pdf")
 ```
 
-Script completo: `examples/basic_usage.py`
+---
 
-## Esempio: verifica permessi utente sul sito
+## Examples
 
-```python
-import os
-from sharepoint_ms import SharePointClient, SharePointConfig
+All examples live in the `examples/` folder and are designed to be
+**atomic** – each one demonstrates a single operation.
 
-config = SharePointConfig(
-    tenant_id=os.environ["TENANT_ID"],
-    client_id=os.environ["CLIENT_ID"],
-    client_secret=os.environ["CLIENT_SECRET"],
-)
+Run them from inside the `examples/` directory:
 
-client = SharePointClient(config)
-permissions = client.get_user_site_permissions(
-    user_email=os.environ["TARGET_USER_EMAIL"],
-    hostname=os.environ["SHAREPOINT_HOSTNAME"],
-    site_path=os.environ["SHAREPOINT_SITE_PATH"],
-)
-
-print(permissions["effective_roles"])
-print(permissions["has_access"])
+```bash
+cd automation/python/sharepoint-ms/examples
+python 01_authenticate.py
 ```
 
-Script completo: `examples/check_user_permissions.py`
+| Script | What it does |
+|---|---|
+| `01_authenticate.py` | Verify credentials and confirm the API connection works |
+| `02_get_site.py` | Resolve a site and print its ID, name, and URL |
+| `03_list_drives.py` | List all document libraries in a site |
+| `04_list_documents_root.py` | List files and folders at the root of a document library |
+| `05_list_subfolder.py` | List the contents of a specific subfolder (by path) |
+| `06_upload_file.py` | Upload a local file into a document library folder |
+| `07_download_file.py` | Download a file by its item ID to a local directory |
+| `08_check_permissions.py` | Check a user's effective SharePoint permissions on a site |
 
-## API disponibili
+### Required .env variables per example
+
+| Example | Extra .env keys needed |
+|---|---|
+| 01 | — |
+| 02 | `SHAREPOINT_HOSTNAME`, `SHAREPOINT_SITE_PATH` |
+| 03 | `SHAREPOINT_HOSTNAME`, `SHAREPOINT_SITE_PATH` |
+| 04 | `SHAREPOINT_HOSTNAME`, `SHAREPOINT_SITE_PATH`, `DRIVE_NAME` |
+| 05 | `SHAREPOINT_HOSTNAME`, `SHAREPOINT_SITE_PATH`, `DRIVE_NAME`, `SUBFOLDER_PATH` |
+| 06 | `SHAREPOINT_HOSTNAME`, `SHAREPOINT_SITE_PATH`, `DRIVE_NAME` (+ optional `SUBFOLDER_PATH`) |
+| 07 | `SHAREPOINT_HOSTNAME`, `SHAREPOINT_SITE_PATH`, `DRIVE_NAME`, `ITEM_ID` |
+| 08 | `SHAREPOINT_HOSTNAME`, `SHAREPOINT_SITE_PATH`, `TARGET_USER_EMAIL` |
+
+---
+
+## API Reference
 
 ### `SharePointConfig`
 
 ```python
-SharePointConfig(
-    tenant_id: str,
-    client_id: str,
-    client_secret: str,
-    timeout_seconds: int = 30,
-)
+@dataclass
+class SharePointConfig:
+    tenant_id: str
+    client_id: str
+    client_secret: str
+    timeout_seconds: int = 30   # HTTP timeout
 ```
 
 ### `SharePointClient`
 
-- `authenticate() -> str`
-  - ottiene e cachea il bearer token
+#### Authentication
 
-- `get_site(hostname: str, site_path: str) -> dict`
-  - esempio: `hostname="contoso.sharepoint.com", site_path="/sites/TeamSite"`
+| Method | Description |
+|---|---|
+| `authenticate()` | Proactively verify credentials (otherwise lazy on first call) |
 
-- `list_drive_root_items(site_id: str) -> list[dict]`
-  - ritorna gli elementi della root documentale
+#### Sites
 
-- `upload_file(site_id: str, folder_path: str, local_file: str | Path) -> dict`
-  - carica un file locale in una cartella SharePoint
+| Method | Returns | Description |
+|---|---|---|
+| `get_site(hostname, site_path)` | `dict` | Resolve site metadata |
 
-- `download_file(site_id: str, item_id: str, destination: str | Path) -> Path`
-  - scarica un item per ID su filesystem locale
+#### Document Libraries (Drives)
 
-- `get_user_site_permissions(user_email: str, hostname: str, site_path: str) -> dict`
-  - ritorna i ruoli effettivi trovati per l'utente su quel sito:
-  - assegnazioni dirette utente
-  - assegnazioni tramite gruppi SharePoint
-  - assegnazioni tramite gruppi AAD (se presenti nei role assignments del sito)
+| Method | Returns | Description |
+|---|---|---|
+| `list_drives(site_id)` | `list[dict]` | List all document libraries |
+| `get_drive_by_name(site_id, drive_name)` | `dict` | Find a library by name (case-insensitive) |
 
-## Errori comuni e come risolverli
+#### Folders & Items
 
-### `401 Unauthorized`
+| Method | Returns | Description |
+|---|---|---|
+| `list_root_items(site_id, drive_id)` | `list[dict]` | Items at library root |
+| `list_folder_items(site_id, drive_id, folder_path)` | `list[dict]` | Items in folder by path |
+| `list_items_by_id(site_id, drive_id, item_id)` | `list[dict]` | Items in folder by ID |
+| `get_item_by_id(site_id, drive_id, item_id)` | `dict` | Single item metadata by ID |
+| `get_item_by_path(site_id, drive_id, item_path)` | `dict` | Single item metadata by path |
 
-Cause tipiche:
+#### File Transfers
 
-- `TENANT_ID`, `CLIENT_ID` o `CLIENT_SECRET` errati
-- Secret scaduto
+| Method | Returns | Description |
+|---|---|---|
+| `upload_file(site_id, drive_id, folder_path, local_file)` | `dict` | Upload a file |
+| `download_file(site_id, drive_id, item_id, destination)` | `Path` | Download a file |
 
-Azioni:
+#### Permissions
 
-- rigenera secret e aggiorna env
-- verifica app registration corretta
+| Method | Returns | Description |
+|---|---|---|
+| `get_user_site_permissions(user_email, hostname, site_path)` | `dict` | User's effective roles on a site |
 
-### `403 Forbidden`
+### Exceptions
 
-Cause tipiche:
+| Exception | When raised |
+|---|---|
+| `SharePointError` | Base class for all library exceptions |
+| `AuthenticationError` | OAuth2 authentication failed |
+| `NotFoundError` | Resource not found (HTTP 404) |
+| `ForbiddenError` | Access denied – missing API permissions (HTTP 403) |
+| `ApiError` | Any other Graph or SharePoint REST error |
 
-- permessi Graph insufficienti
-- permessi SharePoint API mancanti
-- admin consent non concesso
-- accesso al sito limitato da policy tenant
+---
 
-Azioni:
+## Troubleshooting
 
-- aggiungi i permessi Graph richiesti (`Sites.*`, `User.Read.All`, `Directory.Read.All`)
-- aggiungi permesso SharePoint API (`Sites.Read.All` o `Sites.FullControl.All`)
-- concedi `Grant admin consent`
-- verifica con amministratore M365 eventuali restrizioni
+### `AuthenticationError: Authentication failed (HTTP 400)`
 
-### `404 Not Found` su `get_site`
+- Double-check `TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET` in your `.env`.
+- Ensure the app registration exists and the secret has not expired.
 
-Cause tipiche:
+### `ForbiddenError: Access denied (HTTP 403)`
 
-- `SHAREPOINT_SITE_PATH` non corretto
-- hostname errato (es. typo in `contoso.sharepoint.com`)
+- Go to the app registration → **API permissions** and verify all required
+  permissions are present **and have admin consent** (green checkmark).
+- For `get_user_site_permissions`, ensure `Sites.FullControl.All` (SharePoint)
+  is granted.
 
-Azioni:
+### `NotFoundError: Resource not found (HTTP 404)`
 
-- apri il sito da browser e copia hostname/path esatti
+- Verify `SHAREPOINT_HOSTNAME` and `SHAREPOINT_SITE_PATH` match the actual URL.
+- Example URL `https://contoso.sharepoint.com/sites/virtualization/testing/`
+  → `SHAREPOINT_HOSTNAME=contoso.sharepoint.com`
+  → `SHAREPOINT_SITE_PATH=/sites/virtualization/testing`
+- Verify `DRIVE_NAME` matches the exact display name of a document library
+  (run example 03 to list available libraries).
 
-## Sicurezza
+### `RuntimeError: Missing environment variables`
 
-- Non committare mai `CLIENT_SECRET` su git
-- Usa secret manager (GitHub Actions secrets, Azure Key Vault, HashiCorp Vault, ecc.)
-- Ruota periodicamente i segreti
-- Assegna il principio del privilegio minimo (solo i permessi necessari)
+- Make sure `.env` exists in the project root (copy from `.env.example`).
+- All required keys must have non-empty values.
 
-## Limitazioni attuali
+### Files not showing in the correct library
 
-- Non gestisce upload chunked per file molto grandi
-- Non include retry/backoff automatico su rate-limit (`429`)
-- Il controllo permessi non espande gruppi esterni non risolvibili via Graph/claims
-- Non valuta eventuali permessi ereditati da livelli superiori non visibili nei role assignments del sito
+- In SharePoint, **"Documents"** is the most common default document library
+  name, but your site may use a different name or a localized variant.
+- Run **example 03** first to list all available document libraries and their
+  exact names.
 
-Se vuoi, nel prossimo step posso estendere la libreria con:
+---
 
-- paginazione automatica
-- retry con exponential backoff
-- upload session per file grandi
-- wrapper typed (pydantic/dataclass) per le risposte Graph
+## Architecture
 
-## Licenza
+The library follows SOLID principles:
 
-MIT
+```
+src/sharepoint_ms/
+├── __init__.py            Public API exports
+├── config.py              SharePointConfig dataclass (S)
+├── exceptions.py          Exception hierarchy (S)
+├── _auth.py               TokenProvider protocol + ClientCredentials impl (D, O)
+├── _http.py               GraphHttpClient + SharePointRestClient (S)
+├── site_service.py        SiteService – site resolution (S)
+├── drive_service.py       DriveService – files and folders (S)
+├── permission_service.py  PermissionService – role assignments (S)
+└── client.py              SharePointClient façade (composes services) (D)
+```
+
+- **Single Responsibility** – each module has one well-defined job.
+- **Open/Closed** – `TokenProvider` is a `Protocol`; swap implementations without changing callers.
+- **Dependency Inversion** – `SharePointClient` depends on `TokenProvider` (abstraction), not `ClientCredentialsTokenProvider` (concrete class).
+
+---
+
+## Limitations
+
+- **Upload size**: The simple upload endpoint supports files up to ~4 MB.
+  For larger files, use the resumable upload session API (not yet implemented).
+- **Delegated permissions**: Only app-only (`client_credentials`) authentication
+  is supported. Delegated (user-context) flows are not implemented.
+- **Token expiry**: Tokens are cached in memory for the lifetime of the
+  `SharePointClient` instance. For long-running processes, create a new
+  instance or call `client._tokens.invalidate(scope)` to force a refresh.
+
+---
+
+## License
+
+MIT License – see [LICENSE](LICENSE).

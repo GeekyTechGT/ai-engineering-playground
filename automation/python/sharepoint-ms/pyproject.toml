@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sharepoint-ms"
-version = "0.1.0"
-description = "Libreria Python per interagire con Microsoft SharePoint via Microsoft Graph"
+version = "0.2.0"
+description = "Python library for Microsoft SharePoint Online automation via Microsoft Graph API"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
