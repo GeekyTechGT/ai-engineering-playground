@@ -1,3 +1,4 @@
 claude-code-doc/mcp-servers-manual.md
 claude-code-doc/mcp-atlassina+claude.md
-./jira-clien/.env
+automation/jira-client/.env
+automation/sharepoint-ms/.env
